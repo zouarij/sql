@@ -65,19 +65,9 @@ LEFT JOIN (
         WHERE GIN_CodNature IS NOT NULL AND GIN_CodISIN IS NOT NULL
     ) b WHERE b.RowNumberRank=1
 ) GIN ON GIN.GIN_CodISIN = Altid_Isin
+LEFT JOIN #TRANSACTION_TMP t
+    ON t.TRA_CodSociete = COALESCE(vrt.codsociete, evd.CODE_SOCIETE, 'ODO')
+   AND t.TRA_TypSrc = 'ULL'
+   AND t.TRA_IdSrc = table_id
 WHERE table_id = '10043182544'
-
-EXCEPT
-
-SELECT 
-    TRA_CodEtat, TRA_TypSrc, TRA_IdSrc, TRA_Workflow, TRA_CodSociete,
-    TRA_CodIdentifiantClient, TRA_IdTiersDecisionnaire, TRA_CanalOrdreClient, 
-    TRA_CodPrestataireOrigine, TRA_CodPrestataire, TRA_MarcheOTC, 
-    TRA_TypTiersContrepartie, TRA_IdTiersContrepartie, TRA_CodTypDistribution, 
-    TRA_IdOrdreMarche, TRA_IdExecution, TRA_IdExterneTransactionMarche, 
-    TRA_IdCollaborateurExec, TRA_IdAlgorithme, TRA_TradingDateTime, 
-    TRA_IdInstrument, TRA_CodSens, TRA_IsVenteADecouvert, TRA_Qte, 
-    TRA_DeviseQte, TRA_Prix, TRA_DevisePrix, TRA_MontantNet, 
-    TRA_TransmitterCodLEI, TRA_Counterparty_Id, TRA_ExecId, TRA_TradeId, 
-    TRA_OrderId, TRA_BrokerId, TRA_lastMarket
-FROM #TRANSACTION_TMP;
+AND t.TRA_IdSrc IS NULL;
