@@ -7,17 +7,55 @@ WITH SourceData AS (
                 table_id
             ORDER BY [Timestamp négociation] DESC
         ) AS rn,
+
         'CONSO' AS TRA_CodEtat, 
         'ULL' AS TRA_TypSrc, 
         table_id AS TRA_IdSrc,
         'b_i/market/' + ISNULL(ownerdesk_op,'') + '/' + ISNULL(ordercapacity,'') AS TRA_Workflow,
         COALESCE(vrt.codsociete, evd.CODE_SOCIETE, 'ODO') AS TRA_CodSociete,
         COALESCE(DataTransmittedClientLEI, clientId_op, NULLIF(bookid,'Washbook_Client')) AS TRA_CodIdentifiantClient,
-        -- rest of your columns ...
-        Counterparty_Id, EXECID, UL_ID, REFORDER, BrokerId, lastMarket
+        NULL AS TRA_IdTiersDecisionnaire,
+        CASE WHEN traderId = 'WebOddo' THEN 'WEB' 
+             WHEN ORN IS NOT NULL THEN 'FIX' 
+             WHEN ORN IS NULL AND clientid IS NULL THEN 'VOIX' END AS TRA_CanalOrdreClient,
+        LEFT(CASE WHEN LEFT(clientId_op,7) = 'ROUTAGE' THEN 'CARNET INSTRUCTION' ELSE ORN END,20) AS TRA_CodPrestataireOrigine,
+        'ULLINK' AS TRA_CodPrestataire,
+        [Marché/OTC] AS TRA_MarcheOTC,
+        CASE WHEN ISNULL(BrokerId,'') IN ('ULBB_PLAT','ODDO','') OR ExDestination IN ('XMON','XEUR') THEN 'VENUE' ELSE 'BROKER' END AS TRA_TypTiersContrepartie,
+        CASE WHEN ISNULL(BrokerId,'') IN ('ULBB_PLAT','ODDO','') THEN lastMarket
+             WHEN ExDestination IN ('XMON','XEUR') THEN ExDestination
+             ELSE BrokerId END AS TRA_IdTiersContrepartie,
+        CASE WHEN COALESCE(vrt.codsociete ,'',evd.CODE_SOCIETE) = 'OCF' AND ISNULL(ordercapacity,'') IN ('','liquidityprovider','principal') THEN 'GSM'
+             WHEN ISNULL([ID Utilisateur ordre marché],'') = 'OMSReport' AND LEFT(ISNULL(clientId_op,''),7) != 'ODDOCAC' THEN 'RTO'
+             ELSE LEFT(ordercapacity,20) END AS TRA_CodTypDistribution,
+        RefOrder AS TRA_IdOrdreMarche,
+        Ul_id AS TRA_IdExecution,
+        ARM_TVTIC AS TRA_IdExterneTransactionMarche,
+        CASE WHEN [owner] ='execution_channel' THEN orderowner 
+             WHEN [owner] LIKE 'OMSReport%' THEN traderid 
+             ELSE owner END AS TRA_IdCollaborateurExec,
+        CASE WHEN LEFT(clientId_op,7) = 'ODDOCAC' AND CONVERT(VARCHAR, clientSource) = 'I_MARVELSOFT' 
+             THEN CONVERT(VARCHAR, instructions_trading) END AS TRA_IdAlgorithme,
+        [Timestamp négociation] AS TRA_TradingDateTime,
+        Altid_Isin AS TRA_IdInstrument,
+        Sens AS TRA_CodSens,
+        NULL AS TRA_IsVenteADecouvert,
+        [Quantité exécutée] AS TRA_Qte,
+        CASE WHEN GIN_CodTypeExpressionCours IN ('02','03','') THEN [Monnaie prix] END AS TRA_DeviseQte,
+        CASE WHEN [Monnaie prix] = 'GBX' THEN Prix/100 ELSE Prix END AS TRA_Prix,
+        CASE WHEN [Monnaie prix] = 'GBX' THEN 'GBP' ELSE LEFT([Monnaie prix],3) END AS TRA_DevisePrix,
+        NULL AS TRA_MontantNet,
+        CASE WHEN DataTransmittedClientLEI IS NOT NULL THEN '969500IHDSNRRY5LDB67' END AS TRA_TransmitterCodLEI,
+        Counterparty_Id AS TRA_Counterparty_Id,
+        EXECID AS TRA_ExecId,
+        UL_ID AS TRA_TradeId,
+        REFORDER AS TRA_OrderId,
+        BrokerId AS TRA_BrokerId,
+        lastMarket AS TRA_lastMarket
     FROM RD2_V_TRA_ULLINK WITH (NOLOCK)
     OUTER APPLY (SELECT * FROM RD2_V_REF_TIERS WHERE clientId_op = code AND code IS NOT NULL) vrt
-    LEFT JOIN #EVD_EVOLUTION_DEPOUILLEMENT evd ON Ul_id = evd.REF_UL_ID COLLATE SQL_Latin1_General_CP1_CS_AS AND evd.dr = 1
+    LEFT JOIN #EVD_EVOLUTION_DEPOUILLEMENT evd 
+        ON Ul_id = evd.REF_UL_ID COLLATE SQL_Latin1_General_CP1_CS_AS AND evd.dr = 1
     LEFT JOIN (
         SELECT * FROM (
             SELECT GIN_CodISIN, GIN_CodNature, GIN_CodTypeExpressionCours,
@@ -31,7 +69,7 @@ WITH SourceData AS (
 
 MERGE INTO #TRANSACTION_TMP AS target
 USING (
-    SELECT * FROM SourceData WHERE rn = 1 -- Keep only first row per PK
+    SELECT * FROM SourceData WHERE rn = 1
 ) AS src
 ON target.TRA_CodSociete = src.TRA_CodSociete
    AND target.TRA_TypSrc = src.TRA_TypSrc
@@ -40,11 +78,25 @@ ON target.TRA_CodSociete = src.TRA_CodSociete
 WHEN NOT MATCHED THEN
     INSERT (
         TRA_CodEtat, TRA_TypSrc, TRA_IdSrc, TRA_Workflow, TRA_CodSociete,
-        TRA_CodIdentifiantClient, -- rest of your columns ...
-        Counterparty_Id, EXECID, UL_ID, REFORDER, BrokerId, lastMarket
+        TRA_CodIdentifiantClient, TRA_IdTiersDecisionnaire, TRA_CanalOrdreClient, 
+        TRA_CodPrestataireOrigine, TRA_CodPrestataire, TRA_MarcheOTC, 
+        TRA_TypTiersContrepartie, TRA_IdTiersContrepartie, TRA_CodTypDistribution, 
+        TRA_IdOrdreMarche, TRA_IdExecution, TRA_IdExterneTransactionMarche, 
+        TRA_IdCollaborateurExec, TRA_IdAlgorithme, TRA_TradingDateTime, 
+        TRA_IdInstrument, TRA_CodSens, TRA_IsVenteADecouvert, TRA_Qte, 
+        TRA_DeviseQte, TRA_Prix, TRA_DevisePrix, TRA_MontantNet, 
+        TRA_TransmitterCodLEI, TRA_Counterparty_Id, TRA_ExecId, TRA_TradeId, 
+        TRA_OrderId, TRA_BrokerId, TRA_lastMarket
     )
     VALUES (
         src.TRA_CodEtat, src.TRA_TypSrc, src.TRA_IdSrc, src.TRA_Workflow, src.TRA_CodSociete,
-        src.TRA_CodIdentifiantClient, -- rest of your columns ...
-        src.Counterparty_Id, src.EXECID, src.UL_ID, src.REFORDER, src.BrokerId, src.lastMarket
+        src.TRA_CodIdentifiantClient, src.TRA_IdTiersDecisionnaire, src.TRA_CanalOrdreClient, 
+        src.TRA_CodPrestataireOrigine, src.TRA_CodPrestataire, src.TRA_MarcheOTC, 
+        src.TRA_TypTiersContrepartie, src.TRA_IdTiersContrepartie, src.TRA_CodTypDistribution, 
+        src.TRA_IdOrdreMarche, src.TRA_IdExecution, src.TRA_IdExterneTransactionMarche, 
+        src.TRA_IdCollaborateurExec, src.TRA_IdAlgorithme, src.TRA_TradingDateTime, 
+        src.TRA_IdInstrument, src.TRA_CodSens, src.TRA_IsVenteADecouvert, src.TRA_Qte, 
+        src.TRA_DeviseQte, src.TRA_Prix, src.TRA_DevisePrix, src.TRA_MontantNet, 
+        src.TRA_TransmitterCodLEI, src.TRA_Counterparty_Id, src.TRA_ExecId, src.TRA_TradeId, 
+        src.TRA_OrderId, src.TRA_BrokerId, src.TRA_lastMarket
     );
